@@ -5,8 +5,11 @@ import pathlib
 import pytest
 
 from app import create_app
+from app.contract import contract
+from app.contract import mocks
 from app.domain import models
 from app.persistence import repositories
+from app.samples import demo_data
 
 
 def test_dashboard_loads(tmp_path: pathlib.Path) -> None:
@@ -262,14 +265,48 @@ def test_projects_crud_workflow(tmp_path: pathlib.Path) -> None:
     assert repositories.ProjectRepository().get_by_id("P1") is None
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team A): Implement comparison controller & view",
-)
 def test_compare_solutions_view(tmp_path: pathlib.Path) -> None:
-    """Verifies solution comparison controller (Team A implementation)."""
+    """Verifies solution comparison controller and view."""
     db_file = tmp_path / "test_comp.db"
     app = create_app({"TESTING": True, "DATABASE_PATH": db_file})
     client = app.test_client()
 
-    client.get("/compare?sol1=S1&sol2=S2")
+    # 1. Base view without query params renders with selection prompt
+    empty_res = client.get("/compare")
+    assert empty_res.status_code == 200
+    assert b"Side-by-Side Solution Comparison" in empty_res.data
+    assert b"Select two solutions above" in empty_res.data
+
+    # 2. View with nonexistent IDs warns user gracefully
+    missing_res = client.get(
+        "/compare?sol1=NONEXISTENT_A&sol2=NONEXISTENT_B",
+        follow_redirects=True,
+    )
+    assert missing_res.status_code == 200
+    assert b"was not found" in missing_res.data
+
+    # 3. View with two valid solutions displays comparative analysis
+    scenario = demo_data.get_standard_scenario()
+    mock_engine = mocks.MockAssignmentEngine()
+    req = contract.RunRequest(
+        students=scenario["students"],
+        projects=scenario["projects"],
+        skills=scenario["skills"],
+        fixed_assignments=scenario["fixed_assignments"],
+        max_alternatives=2,
+    )
+    run = mock_engine.execute_run(req)
+    assert len(run.solutions) >= 2
+
+    sol_a = run.solutions[0]
+    sol_b = run.solutions[1]
+
+    comp_res = client.get(
+        f"/compare?sol1={sol_a.id}&sol2={sol_b.id}",
+        follow_redirects=True,
+    )
+    assert comp_res.status_code == 200
+    assert b"Side-by-Side Solution Comparison" in comp_res.data
+    assert b"Changed Student Allocations" in comp_res.data
+    assert b"Trade-off Findings" in comp_res.data
+    assert b"Detailed Allocation Shifts" in comp_res.data
