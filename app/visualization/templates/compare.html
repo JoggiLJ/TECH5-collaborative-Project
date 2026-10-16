@@ -8,21 +8,23 @@
     <div>
       <h2 class="card-title">Side-by-Side Solution Comparison</h2>
       <p style="color: var(--text-muted); font-size: 0.88rem; margin-top: 0.2rem;">
-        Compare two generated alternative allocations to reveal trade-offs between student preference satisfaction and project skill fit.
+        Compare two generated alternative allocations to reveal trade-offs between student preference satisfaction and
+        project skill fit.
       </p>
     </div>
   </div>
 
   <div class="card-body">
     <!-- Solution Selector Form -->
-    <form action="{{ url_for('visualization_web.compare_solutions') }}" method="GET" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 1.5rem; background: #f8fafc; border: 1px solid var(--border-color); padding: 1rem; border-radius: var(--radius-md);">
+    <form action="{{ url_for('visualization_web.compare_solutions') }}" method="GET"
+      style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 1.5rem; background: #f8fafc; border: 1px solid var(--border-color); padding: 1rem; border-radius: var(--radius-md);">
       <div style="flex: 1; min-width: 250px;">
         <label class="form-label" for="sol1">Baseline Solution (A):</label>
         <select name="sol1" id="sol1" class="form-control">
           {% for s in all_solutions %}
-            <option value="{{ s.id }}" {% if sol_a and sol_a.id == s.id %}selected{% endif %}>
-              Alt #{{ s.alternative_number }} &ndash; {{ s.strategy_name }} (Run: {{ s.run_id[:8] }})
-            </option>
+          <option value="{{ s.id }}" {% if sol_a and sol_a.id==s.id %}selected{% endif %}>
+            Alt #{{ s.alternative_number }} &ndash; {{ s.strategy_name }} (Run: {{ s.run_id[:8] }})
+          </option>
           {% endfor %}
         </select>
       </div>
@@ -31,9 +33,9 @@
         <label class="form-label" for="sol2">Comparison Solution (B):</label>
         <select name="sol2" id="sol2" class="form-control">
           {% for s in all_solutions %}
-            <option value="{{ s.id }}" {% if sol_b and sol_b.id == s.id %}selected{% endif %}>
-              Alt #{{ s.alternative_number }} &ndash; {{ s.strategy_name }} (Run: {{ s.run_id[:8] }})
-            </option>
+          <option value="{{ s.id }}" {% if sol_b and sol_b.id==s.id %}selected{% endif %}>
+            Alt #{{ s.alternative_number }} &ndash; {{ s.strategy_name }} (Run: {{ s.run_id[:8] }})
+          </option>
           {% endfor %}
         </select>
       </div>
@@ -43,112 +45,109 @@
       </button>
     </form>
 
-    <!-- TODO (Team A): Implement Side-by-Side Solution Comparison -->
-    <div class="alert alert-info" style="margin-bottom: 1.5rem;">
-      <strong>Team A Starter Carcass:</strong>
-      Implement the comparative analysis view below using the <code>RunComparison</code> DTO.
-      Display comparative delta metrics (skill fit, preference rank, Gini), trade-off findings,
-      and the table of changed student allocations between Solution A and Solution B.
-    </div>
 
     {% if comparison and sol_a and sol_b %}
-      <!-- Comparative KPI Deltas -->
-      <div class="kpi-grid">
-        <div class="kpi-card">
-          <span class="kpi-label">Changed Student Allocations</span>
-          <span class="kpi-value">{{ comparison.changed_students_count }}</span>
-          <span class="kpi-sub">
-            {% if comparison.is_distinct %}
-              &#10003; Distinct solution alternative
-            {% else %}
-              Identical allocation outcomes
-            {% endif %}
-          </span>
-        </div>
-
-        <div class="kpi-card">
-          <span class="kpi-label">&Delta; Average Skill Fit</span>
-          <span class="kpi-value {% if comparison.delta_mean_skill_fit > 0 %}text-success{% elif comparison.delta_mean_skill_fit < 0 %}text-danger{% endif %}">
-            {% if comparison.delta_mean_skill_fit > 0 %}+{% endif %}{{ (comparison.delta_mean_skill_fit * 100)|round(1) }}%
-          </span>
-          <span class="kpi-sub">Solution B vs Solution A</span>
-        </div>
-
-        <div class="kpi-card">
-          <span class="kpi-label">&Delta; Average Preference Rank</span>
-          <span class="kpi-value {% if comparison.delta_mean_rank < 0 %}text-success{% elif comparison.delta_mean_rank > 0 %}text-danger{% endif %}">
-            {% if comparison.delta_mean_rank > 0 %}+{% endif %}{{ comparison.delta_mean_rank }}
-          </span>
-          <span class="kpi-sub">Lower rank number is better</span>
-        </div>
-
-        <div class="kpi-card">
-          <span class="kpi-label">Rank Shifts in Cohort</span>
-          <span class="kpi-value">
-            <span style="color: var(--success);">{{ comparison.rank_improved_count }} &uarr;</span>
-            /
-            <span style="color: var(--danger);">{{ comparison.rank_worsened_count }} &darr;</span>
-          </span>
-          <span class="kpi-sub">{{ comparison.rank_improved_count }} improved, {{ comparison.rank_worsened_count }} worsened</span>
-        </div>
+    <!-- Comparative KPI Deltas -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <span class="kpi-label">Changed Student Allocations</span>
+        <span class="kpi-value">{{ comparison.changed_students_count }}</span>
+        <span class="kpi-sub">
+          {% if comparison.is_distinct %}
+          &#10003; Distinct solution alternative
+          {% else %}
+          Identical allocation outcomes
+          {% endif %}
+        </span>
       </div>
 
-      <!-- Trade-off Analytical Summary -->
-      <div class="alert alert-info" style="margin-bottom: 1.5rem;">
-        <strong>Trade-off Findings:</strong>
-        <ul style="margin-left: 1.5rem; margin-top: 0.35rem;">
-          {% for t in comparison.trade_off_summary %}
-            <li>{{ t }}</li>
+      <div class="kpi-card">
+        <span class="kpi-label">&Delta; Average Skill Fit</span>
+        <span
+          class="kpi-value {% if comparison.delta_mean_skill_fit > 0 %}text-success{% elif comparison.delta_mean_skill_fit < 0 %}text-danger{% endif %}">
+          {% if comparison.delta_mean_skill_fit > 0 %}+{% endif %}{{ (comparison.delta_mean_skill_fit * 100)|round(1)
+          }}%
+        </span>
+        <span class="kpi-sub">Solution B vs Solution A</span>
+      </div>
+
+      <div class="kpi-card">
+        <span class="kpi-label">&Delta; Average Preference Rank</span>
+        <span
+          class="kpi-value {% if comparison.delta_mean_rank < 0 %}text-success{% elif comparison.delta_mean_rank > 0 %}text-danger{% endif %}">
+          {% if comparison.delta_mean_rank > 0 %}+{% endif %}{{ comparison.delta_mean_rank }}
+        </span>
+        <span class="kpi-sub">Lower rank number is better</span>
+      </div>
+
+      <div class="kpi-card">
+        <span class="kpi-label">Rank Shifts in Cohort</span>
+        <span class="kpi-value">
+          <span style="color: var(--success);">{{ comparison.rank_improved_count }} &uarr;</span>
+          /
+          <span style="color: var(--danger);">{{ comparison.rank_worsened_count }} &darr;</span>
+        </span>
+        <span class="kpi-sub">{{ comparison.rank_improved_count }} improved, {{ comparison.rank_worsened_count }}
+          worsened</span>
+      </div>
+    </div>
+
+    <!-- Trade-off Analytical Summary -->
+    <div class="alert alert-info" style="margin-bottom: 1.5rem;">
+      <strong>Trade-off Findings:</strong>
+      <ul style="margin-left: 1.5rem; margin-top: 0.35rem;">
+        {% for t in comparison.trade_off_summary %}
+        <li>{{ t }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <!-- Changed Students Table -->
+    <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 1rem;">
+      Detailed Allocation Shifts ({{ comparison.changed_students_count }} students changed)
+    </h3>
+    <div class="table-responsive">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Student</th>
+            <th>Solution A Project</th>
+            <th>Solution A Rank</th>
+            <th>Solution B Project</th>
+            <th>Solution B Rank</th>
+            <th>Rank Shift (&Delta; Rank)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in comparison.changed_assignments %}
+          <tr>
+            <td><strong>{{ c.student_name or c.student_id }}</strong></td>
+            <td>{{ c.project_a_title or c.project_a_id }}</td>
+            <td>Choice #{{ c.rank_a }}</td>
+            <td>{{ c.project_b_title or c.project_b_id }}</td>
+            <td>Choice #{{ c.rank_b }}</td>
+            <td>
+              {% if c.rank_delta < 0 %} <span class="badge badge-success">&#9650; {{ c.rank_delta|abs }} ranks
+                better</span>
+                {% elif c.rank_delta > 0 %}
+                <span class="badge badge-danger">&#9660; {{ c.rank_delta }} ranks worse</span>
+                {% else %}
+                <span class="badge badge-secondary">Lateral move</span>
+                {% endif %}
+            </td>
+          </tr>
           {% endfor %}
-        </ul>
-      </div>
-
-      <!-- Changed Students Table -->
-      <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 1rem;">
-        Detailed Allocation Shifts ({{ comparison.changed_students_count }} students changed)
-      </h3>
-      <div class="table-responsive">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Student</th>
-              <th>Solution A Project</th>
-              <th>Solution A Rank</th>
-              <th>Solution B Project</th>
-              <th>Solution B Rank</th>
-              <th>Rank Shift (&Delta; Rank)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for c in comparison.changed_assignments %}
-              <tr>
-                <td><strong>{{ c.student_name or c.student_id }}</strong></td>
-                <td>{{ c.project_a_title or c.project_a_id }}</td>
-                <td>Choice #{{ c.rank_a }}</td>
-                <td>{{ c.project_b_title or c.project_b_id }}</td>
-                <td>Choice #{{ c.rank_b }}</td>
-                <td>
-                  {% if c.rank_delta < 0 %}
-                    <span class="badge badge-success">&#9650; {{ c.rank_delta|abs }} ranks better</span>
-                  {% elif c.rank_delta > 0 %}
-                    <span class="badge badge-danger">&#9660; {{ c.rank_delta }} ranks worse</span>
-                  {% else %}
-                    <span class="badge badge-secondary">Lateral move</span>
-                  {% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+        </tbody>
+      </table>
+    </div>
     {% elif not comparison and sol_a and sol_b %}
-      <p style="color: var(--text-muted); text-align: center; padding: 2rem;">
-        Comparison data not available for the selected solutions.
-      </p>
+    <p style="color: var(--text-muted); text-align: center; padding: 2rem;">
+      Comparison data not available for the selected solutions.
+    </p>
     {% else %}
-      <p style="color: var(--text-muted); text-align: center; padding: 2rem;">
-        Select two solutions above to view comparative trade-offs.
-      </p>
+    <p style="color: var(--text-muted); text-align: center; padding: 2rem;">
+      Select two solutions above to view comparative trade-offs.
+    </p>
     {% endif %}
   </div>
 </div>

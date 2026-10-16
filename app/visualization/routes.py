@@ -761,6 +761,7 @@ def lock_and_rerun(solution_id: str) -> flask.Response:
         flask.url_for("visualization_web.view_run", run_id=new_run.id)
     )
 
+
 @web_bp.post("/clear-solutions")
 def clear_solutions() -> flask.Response:
     """Clears all solutions in the current run."""
@@ -777,11 +778,66 @@ def clear_solutions() -> flask.Response:
 def compare_solutions() -> Any:
     """Renders side-by-side comparative analysis of two solutions.
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
+    Extracts 'sol1' and 'sol2' query parameters representing solution IDs,
+    retrieves their domain records, and executes a trade-off comparison
+    via the AssignmentEngine contract. Falls back gracefully to the
+    MockAssignmentEngine if the production solver is unimplemented.
+
+    Returns:
+        Rendered HTML template comparing the two allocation solutions.
     """
-    raise NotImplementedError(
-        "TODO (Team A): Implement side-by-side solution comparison controller"
+    sol1_id = flask.request.args.get("sol1", "").strip()
+    sol2_id = flask.request.args.get("sol2", "").strip()
+
+    run_repo = repositories.RunRepository()
+    runs = run_repo.list_runs()
+    all_solutions: list[models.Solution] = [
+        sol for run in runs for sol in run.solutions
+    ]
+
+    sol_a: models.Solution | None = None
+    sol_b: models.Solution | None = None
+    comparison: models.RunComparison | None = None
+
+    if sol1_id:
+        sol_a = run_repo.get_solution(sol1_id)
+        if sol_a is None:
+            flask.flash(
+                f"Baseline solution '{sol1_id}' was not found.", "warning"
+            )
+
+    if sol2_id:
+        sol_b = run_repo.get_solution(sol2_id)
+        if sol_b is None:
+            flask.flash(
+                f"Comparison solution '{sol2_id}' was not found.", "warning"
+            )
+
+    if sol_a is not None and sol_b is not None:
+        engine: contract.AssignmentEngineContract = solvers.AssignmentEngine()
+        try:
+            comparison = engine.compare_solutions(sol_a.id, sol_b.id)
+        except NotImplementedError:
+            flask.flash(
+                "Notice: AssignmentEngine.compare_solutions() is not yet "
+                "implemented by Team B. Running with MockAssignmentEngine "
+                "for demonstration.",
+                "info",
+            )
+            mock_engine = mocks.MockAssignmentEngine()
+            comparison = mock_engine.compare_solutions(sol_a.id, sol_b.id)
+        except KeyError:
+            flask.flash(
+                "One or both solutions could not be retrieved for comparison.",
+                "danger",
+            )
+
+    return flask.render_template(
+        "compare.html",
+        all_solutions=all_solutions,
+        sol_a=sol_a,
+        sol_b=sol_b,
+        comparison=comparison,
     )
 
 
