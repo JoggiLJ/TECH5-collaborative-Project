@@ -193,17 +193,29 @@ def test_skills_crud_workflow(tmp_path: pathlib.Path) -> None:
     )
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team A): Implement project CRUD",
-)
 def test_projects_crud_workflow(tmp_path: pathlib.Path) -> None:
-    """Verifies project addition workflow (Team A implementation)."""
+    """Verifies project addition, edit, delete, and capacity validation."""
     db_file = tmp_path / "test_proj.db"
     app = create_app({"TESTING": True, "DATABASE_PATH": db_file})
     client = app.test_client()
 
-    client.post(
+    # 1. Invalid capacity (min > max) should be rejected
+    res_invalid = client.post(
+        "/projects/new",
+        data={
+            "id": "P_INV",
+            "title": "Invalid Capacity Project",
+            "min_capacity": 5,
+            "max_capacity": 2,
+        },
+        follow_redirects=True,
+    )
+    assert res_invalid.status_code == 200
+    assert b"Minimum capacity cannot exceed maximum capacity" in res_invalid.data
+    assert repositories.ProjectRepository().get_by_id("P_INV") is None
+
+    # 2. Create project
+    res = client.post(
         "/projects/new",
         data={
             "id": "P1",
@@ -214,6 +226,40 @@ def test_projects_crud_workflow(tmp_path: pathlib.Path) -> None:
         },
         follow_redirects=True,
     )
+    assert res.status_code == 200
+    assert b"FinTech Risk" in res.data
+
+    saved = repositories.ProjectRepository().get_by_id("P1")
+    assert saved is not None
+    assert saved.title == "FinTech Risk"
+    assert saved.min_capacity == 1
+    assert saved.max_capacity == 2
+
+    # 3. Update project
+    res_update = client.post(
+        "/projects/P1/edit",
+        data={
+            "title": "FinTech Risk Advanced",
+            "description": "Updated risk description",
+            "min_capacity": 2,
+            "max_capacity": 4,
+        },
+        follow_redirects=True,
+    )
+    assert res_update.status_code == 200
+    assert b"FinTech Risk Advanced" in res_update.data
+
+    updated = repositories.ProjectRepository().get_by_id("P1")
+    assert updated is not None
+    assert updated.title == "FinTech Risk Advanced"
+    assert updated.min_capacity == 2
+    assert updated.max_capacity == 4
+
+    # 4. Delete project
+    res_delete = client.post("/projects/P1/delete", follow_redirects=True)
+    assert res_delete.status_code == 200
+    assert b"removed" in res_delete.data
+    assert repositories.ProjectRepository().get_by_id("P1") is None
 
 
 @pytest.mark.xfail(

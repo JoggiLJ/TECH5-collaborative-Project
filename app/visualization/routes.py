@@ -388,16 +388,124 @@ def new_project_form() -> str:
     )
 
 
+def _parse_project_requirements(
+    project_id: str,
+    form_data: dict[str, Any],
+    valid_skill_ids: set[str],
+) -> list[models.ProjectRequirement]:
+    """Parses skill requirement inputs from project form data.
+
+    Args:
+        project_id: Identifier of the target project.
+        form_data: Mapping of form field keys to values.
+        valid_skill_ids: Set of valid catalogued skill identifiers.
+
+    Returns:
+        List of ProjectRequirement domain objects.
+    """
+    requirements: list[models.ProjectRequirement] = []
+    for skill_id in valid_skill_ids:
+        lvl_key = f"req_level_{skill_id}"
+        mand_key = f"req_mand_{skill_id}"
+
+        level = 0
+        if lvl_key in form_data and form_data[lvl_key]:
+            try:
+                level = int(form_data[lvl_key])
+            except ValueError:
+                level = 0
+
+        is_mandatory = bool(form_data.get(mand_key))
+
+        if level > 0 or is_mandatory:
+            requirements.append(
+                models.ProjectRequirement(
+                    project_id=project_id,
+                    skill_id=skill_id,
+                    minimum_level=max(1, level),
+                    is_mandatory=is_mandatory,
+                )
+            )
+    return requirements
+
+
 @web_bp.post("/projects/new")
 def create_project() -> flask.Response:
-    """Processes creation of a project.
+    """Processes creation of a project entity with requirements."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied for current role.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement project creation and requirement parsing"
+    p_id = flask.request.form.get("id", "").strip()
+    title = flask.request.form.get("title", "").strip() or p_id
+    description = flask.request.form.get("description", "").strip()
+
+    if not p_id:
+        flask.flash("Project ID cannot be empty.", "warning")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    existing = repositories.ProjectRepository().get_by_id(p_id)
+    if existing:
+        flask.flash(f"Project with ID '{p_id}' already exists.", "danger")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    try:
+        min_cap = int(flask.request.form.get("min_capacity", 0))
+        max_cap = int(flask.request.form.get("max_capacity", 1))
+    except ValueError:
+        flask.flash("Capacities must be integers.", "danger")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    if min_cap < 0:
+        flask.flash("Minimum capacity must be >= 0.", "danger")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    if max_cap < 1:
+        flask.flash("Maximum capacity must be at least 1.", "danger")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    if min_cap > max_cap:
+        flask.flash(
+            "Minimum capacity cannot exceed maximum capacity.", "danger"
+        )
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    valid_skills = {s.id for s in repositories.SkillRepository().list_all()}
+    requirements = _parse_project_requirements(
+        p_id, flask.request.form, valid_skills
     )
+
+    project = models.Project(
+        id=p_id,
+        title=title,
+        description=description,
+        min_capacity=min_cap,
+        max_capacity=max_cap,
+        requirements=requirements,
+    )
+
+    try:
+        repositories.ProjectRepository().save(project)
+    except sqlite3.IntegrityError as exc:
+        flask.flash(f"Database constraint error: {exc}", "danger")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    flask.flash(f"Project '{title}' ({p_id}) created successfully.", "success")
+    return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
 
 @web_bp.get("/projects/<project_id>/edit")
@@ -416,26 +524,83 @@ def edit_project_form(project_id: str) -> Any:
 
 @web_bp.post("/projects/<project_id>/edit")
 def update_project(project_id: str) -> flask.Response:
-    """Updates an existing project entity.
+    """Updates an existing project entity."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied for current role.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement project update and requirement parsing"
+    existing = repositories.ProjectRepository().get_by_id(project_id)
+    if not existing:
+        flask.flash(f"Project '{project_id}' not found.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
+
+    title = flask.request.form.get("title", "").strip() or project_id
+    description = flask.request.form.get("description", "").strip()
+
+    try:
+        min_cap = int(flask.request.form.get("min_capacity", 0))
+        max_cap = int(flask.request.form.get("max_capacity", 1))
+    except ValueError:
+        flask.flash("Capacities must be integers.", "danger")
+        return flask.redirect(
+            flask.url_for(
+                "visualization_web.edit_project_form", project_id=project_id
+            )
+        )
+
+    if min_cap < 0 or max_cap < 1 or min_cap > max_cap:
+        flask.flash(
+            "Invalid capacity: min must be >= 0, max >= 1, and min <= max.",
+            "danger",
+        )
+        return flask.redirect(
+            flask.url_for(
+                "visualization_web.edit_project_form", project_id=project_id
+            )
+        )
+
+    valid_skills = {s.id for s in repositories.SkillRepository().list_all()}
+    requirements = _parse_project_requirements(
+        project_id, flask.request.form, valid_skills
     )
+
+    project = models.Project(
+        id=project_id,
+        title=title,
+        description=description,
+        min_capacity=min_cap,
+        max_capacity=max_cap,
+        requirements=requirements,
+    )
+
+    try:
+        repositories.ProjectRepository().save(project)
+    except sqlite3.IntegrityError as exc:
+        flask.flash(f"Database constraint error: {exc}", "danger")
+        return flask.redirect(
+            flask.url_for(
+                "visualization_web.edit_project_form", project_id=project_id
+            )
+        )
+
+    flask.flash(f"Project '{project_id}' updated successfully.", "success")
+    return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
 
 @web_bp.post("/projects/<project_id>/delete")
 def delete_project(project_id: str) -> flask.Response:
-    """Deletes a project.
+    """Deletes a project."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement project deletion"
-    )
+    deleted = repositories.ProjectRepository().delete(project_id)
+    if deleted:
+        flask.flash(f"Project '{project_id}' removed.", "info")
+    else:
+        flask.flash(f"Project '{project_id}' not found.", "warning")
+
+    return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
 
 # -----------------------------------------------------------------------------
