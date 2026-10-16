@@ -452,26 +452,40 @@ def list_skills() -> str:
 
 @web_bp.post("/skills/new")
 def create_skill() -> flask.Response:
-    """Creates a new skill record.
+    """Creates a new skill record."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_skills"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement skill creation"
-    )
+    skill_id = flask.request.form.get("id", "").strip()
+    name = flask.request.form.get("name", "").strip()
+    description = flask.request.form.get("description", "").strip()
+
+    if not skill_id or not name:
+        flask.flash("Skill code and name cannot be empty.", "warning")
+        return flask.redirect(flask.url_for("visualization_web.list_skills"))
+
+    if repositories.SkillRepository().get_by_id(skill_id) is not None:
+        flask.flash(f"Skill '{skill_id}' already exists.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_skills"))
+
+    skill = models.Skill(id=skill_id, name=name, description=description)
+    repositories.SkillRepository().save(skill)
+
+    flask.flash(f"Skill '{name}' created.", "success")
+    return flask.redirect(flask.url_for("visualization_web.list_skills"))
 
 
 @web_bp.post("/skills/<skill_id>/delete")
 def delete_skill(skill_id: str) -> flask.Response:
-    """Deletes a skill record.
+    """Deletes a skill record."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_skills"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement skill deletion"
-    )
+    repositories.SkillRepository().delete(skill_id)
+    flask.flash(f"Skill '{skill_id}' removed.", "info")
+    return flask.redirect(flask.url_for("visualization_web.list_skills"))
 
 
 @web_bp.get("/preferences")
