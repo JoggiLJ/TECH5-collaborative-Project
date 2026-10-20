@@ -120,10 +120,11 @@ All three strategies are solved subject to the same constraints (constraints 1 t
 Define the mathematical formulation for all evaluation metrics implemented in `app/engine/metrics.py`:
 
 ### 3.1 Feasibility Indicators
+Each check re-verifies a hard constraint of Section 2.4 on the returned solution, with $n_p = \sum_{s \in S} x_{s,p}$:
 - Allocation completeness: $\sum_{s \in S} \sum_{p \in P} x_{s,p} = |S|$
-- Capacity compliance check for all $p \in P$
-- Fixed lock adherence check
-- Mandatory requirement fulfillment count
+- Capacity compliance: $l_p \le n_p \le u_p$ for every project with $n_p > 0$
+- Fixed lock adherence: $x_{s^*,p^*} = 1$ for every $(s^*, p^*) \in F$
+- Mandatory requirement fulfillment count: number of pairs $(p, k)$ with $n_p > 0$, $k \in K_p^{M}$ and $\sum_{s \in Q_{p,k}} x_{s,p} = 0$ (must be $0$)
 
 ### 3.2 Efficiency Indicators
 - **Mean Skill-Fit Score ($\bar{\sigma}$):**
@@ -141,7 +142,7 @@ Define the mathematical formulation for all evaluation metrics implemented in `a
 4. **Team's Proposed Fairness Indicator (e.g., Gini Coefficient or Rank Variance):**
    *Provide the mathematical formula, justification, and interpretation:*
    $$G = \frac{\sum_{i=1}^n \sum_{j=1}^n |r_i - r_j|}{2 n \sum_{i=1}^n r_i}$$
-   *[Explain why this metric captures inequality among student outcomes]*
+   *The Gini coefficient measures how evenly preference outcomes are spread across the cohort, from 0 when every student gets the same rank to close to 1 when a few students do much better than the rest. It complements the mean rank and the worst rank, because two solutions can have the same mean while one gives everyone their second choice and the other splits students between first and third choices. Like the Jain's index used by Rezaeinia et al. (2022), it is bounded and does not depend on cohort size, but because it is relative it should always be read together with the mean rank.*
 
 ### 3.4 Capacity Utilization Metrics
 - Per-project utilization percentage:
@@ -172,36 +173,37 @@ Define how student re-allocations are classified:
 *In accordance with Section 9 of the specification, recommendations must separate calculated evidence from advice across distinct policy priorities.*
 
 ### 5.1 Policy Priority 1: Student Preference Maximization
-- **Quantitative Selection Criterion:** [e.g., Lexicographic minimization of unranked count, then $\bar{r}$, then $r_{\max}$]
-- **Calculated Evidence Reported:** [List indicators presented to the user]
-- **Administrative Advice & Trade-Off Warning:** [When to apply and what compromises are made]
+- **Quantitative Selection Criterion:** Recommend the Strategy 1 solution, which maximizes total Borda satisfaction and penalizes the worst assigned rank. Among its alternatives, prefer the fewest unranked students, then the lowest mean rank, then the lowest worst rank.
+- **Calculated Evidence Reported:** Rank distribution, mean rank, worst rank, unranked count and Gini coefficient. Mean skill fit and unmet soft requirements are shown alongside as the cost to businesses.
+- **Administrative Advice & Trade-Off Warning:** Use this when student satisfaction and perceived fairness matter most, for example when projects have few skill demands. Teams may be weaker, so compare their mean skill fit with Strategy 2 to see what businesses give up.
 
 ### 5.2 Policy Priority 2: Project Delivery & Technical Competence
-- **Quantitative Selection Criterion:** [e.g., Maximization of mean skill fit $\bar{\sigma}$]
-- **Calculated Evidence Reported:** [List indicators presented to the user]
-- **Administrative Advice & Trade-Off Warning:** [When to apply and what compromises are made]
+- **Quantitative Selection Criterion:** Recommend the Strategy 2 solution, which maximizes total skill fit. Among its alternatives, prefer the highest mean skill fit, then the fewest unmet soft requirements.
+- **Calculated Evidence Reported:** Mean skill fit, unmet soft requirements, mandatory-skill coverage and capacity utilization. Mean rank and unranked count are shown alongside as the cost to students.
+- **Administrative Advice & Trade-Off Warning:** Use this when project delivery matters most, for example for demanding partner projects. Students may end up far from their preferences, so compare the unranked count and worst rank with Strategy 1.
 
 ### 5.3 Policy Priority 3: Balanced & Egalitarian Compromise
-- **Quantitative Selection Criterion:** [e.g., Multi-objective composite score or Gini minimization]
-- **Calculated Evidence Reported:** [List indicators presented to the user]
-- **Administrative Advice & Trade-Off Warning:** [When to apply and what compromises are made]
+- **Quantitative Selection Criterion:** Recommend the Strategy 3 solution, which weights normalized preference and skill fit equally (λ = 0.5). Among its alternatives, prefer the lowest Gini coefficient.
+- **Calculated Evidence Reported:** All indicators, plus the deltas against Strategies 1 and 2 from Section 4.1. These show how much each side gives up relative to its own best solution.
+- **Administrative Advice & Trade-Off Warning:** Use this as the default when neither students nor businesses have clear priority. The result depends on λ and can only reach supported Pareto points, so it is a compromise rather than the best of both (see Section 7).
 
 ---
 
 ## 6. Assumptions, Boundary Conditions & Edge Cases
 
 Document all operational assumptions:
-1. **Student Submission Incompleteness:** How unranked projects are penalized.
-2. **Ties in Preferences:** How students with identical preference lists are handled.
-3. **Skill Levels:** Handling students with zero declared skills or projects with zero requirements.
-4. **Feasibility Boundaries:** Exact conditions under which the problem is proved mathematically infeasible.
+1. **Student Submission Incompleteness:** An unranked project receives the penalty rank |P|+1 and a Borda score of 0 (Section 2.2), so it is never preferred over a ranked project.
+2. **Ties in Preferences:** Students with identical preference lists are treated symmetrically, so the solver returns one of several equally good allocations and the others are surfaced as alternatives through the no-good cuts.
+3. **Skill Levels:** A student with no declared level in a required skill scores 0 on that skill, and a project with no requirements gives every student a skill fit of 1 (Section 2.2).
+4. **Feasibility Boundaries:** Since projects may be left inactive, the problem is infeasible when no set of projects can host all students within their minimum and maximum capacities, when the locks to a project exceed its maximum capacity, or when a student is locked to a project whose mandatory skill no student meets. These are necessary conditions checked before solving; the final proof of infeasibility is the solver reporting that no solution exists.
 
 ---
 
 ## 7. Limitations & Analytical Deficiencies
 
 Critically reflect on the limitations of your analytical model:
-1. **Computational Complexity:** Scalability limits as $|S|$ and $|P|$ grow.
-2. **Linear Preference Assumptions:** Limitations of Borda count vs. non-linear student utilities.
-3. **Individual vs. Team Synergies:** Individual skill evaluation vs. collective team diversity.
-4. **Static Allocation:** Inability to capture dynamic scheduling or mid-semester changes.
+1. **Computational Complexity:** Solve time for an integer program can grow quickly as |S| and |P| increase, but at course scale the solver typically finishes in seconds. If a run hits the 15-second solver time limit the returned solution may not be optimal, and every additional alternative requires a full re-solve.
+2. **Linear Preference Assumptions:** The Borda score assumes the gap between a 1st and 2nd choice equals the gap between a 4th and 5th choice, which real student utilities need not follow. The weighted sum in Strategy 3 also depends on λ and can only reach supported Pareto-optimal points, so some good compromises between preference and skill fit cannot be found by it.
+3. **Individual vs. Team Synergies:** Skill fit is scored per student and averaged, so a team in which one strong student covers a skill for the others can look weaker than it is. The model also does not capture diversity requirements such as gender, nationality or language.
+4. **Static Allocation:** The assignment is made once and does not handle drop-outs or mid-semester changes, although re-running with current assignments fixed as locks gives a partial remedy.
+5. **Tie-Breaking in Strategy 2:** Because skill-fit scores are fractional, the ε preference term is not a strict tie-breaker and can slightly override small differences in skill fit.
