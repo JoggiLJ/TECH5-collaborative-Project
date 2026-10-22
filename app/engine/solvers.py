@@ -10,6 +10,7 @@ that implements AssignmentEngineContract.
 
 import abc
 import logging
+import sqlite3
 from typing import Any
 import uuid
 
@@ -21,6 +22,8 @@ from app.domain import models
 from app.domain import validation
 from app.engine import metrics
 from app.persistence import repositories
+
+logger = logging.getLogger(__name__)
 
 
 class AssignmentStrategy(abc.ABC):
@@ -216,7 +219,7 @@ class AssignmentStrategy(abc.ABC):
             "proven_optimal": model.sol_status == pulp.LpSolutionOptimal,
             "solve_time_seconds": round(model.solutionTime, 3),
             "num_variables": len(model.variables()),
-            "num_constraints": len(model.constraints),
+            "num_constraints": model.numConstraints(),
             "max_preferences": max_preferences,
             "epsilon": self.epsilon,
         }
@@ -245,6 +248,97 @@ class AssignmentStrategy(abc.ABC):
         return status, assignments, pulp.value(model.objective), diagnostics
 
 
+def _borda_score(
+    student: models.Student, project: models.Project, max_preferences: int
+) -> int:
+    """Returns w^pref_{s,p} = max(0, L - r_{s,p} + 1); unranked scores 0."""
+    rank = student.get_preference_rank(project.id)
+    return 0 if rank is None else max(0, max_preferences - rank + 1)
+
+
+class PreferenceOrientedSolver(AssignmentStrategy):
+    """Strategy 1: maximizes Borda satisfaction and protects the worst-off.
+
+    Objective (Section 2.5): sum w^pref x - mu * rho + epsilon * sum sigma x.
+    """
+
+    def __init__(self, mu: float | None = None) -> None:
+        """Initializes the preference-oriented strategy.
+
+        Args:
+            mu: Penalty per rank step of the worst assigned rank rho. None
+                uses mu = |S|, so improving the worst rank by one step
+                outweighs up to |S| Borda points.
+        """
+        super().__init__(
+            name="PREFERENCE",
+            description=(
+                "Maximizes total Borda preference satisfaction with a strong "
+                "penalty on the worst assigned rank; skill fit breaks ties."
+            ),
+        )
+        self.mu = mu
+
+    def calculate_cost_or_utility(
+        self,
+        student: models.Student,
+        project: models.Project,
+        max_preferences: int,
+    ) -> float:
+        """Returns w^pref_{s,p} + epsilon * sigma_{s,p}."""
+        fit, _ = metrics.calculate_assignment_skill_fit(student, project)
+        return _borda_score(student, project, max_preferences) + (
+            self.epsilon * fit
+        )
+
+    def add_strategy_terms(
+        self,
+        model: pulp.LpProblem,
+        x: dict[tuple[str, str], pulp.LpVariable],
+        students: list[models.Student],
+        projects: list[models.Project],
+    ) -> pulp.LpAffineExpression:
+        """Adds rho >= r_{s,p} x_{s,p} and returns the penalty -mu * rho."""
+        unranked_rank = len(projects) + 1
+        rho = pulp.LpVariable("rho", lowBound=0)
+        for s in students:
+            for p in projects:
+                rank = s.get_preference_rank(p.id) or unranked_rank
+                model += rho >= rank * x[s.id, p.id]
+        mu = self.mu if self.mu is not None else len(students)
+        return -mu * rho
+
+
+class SkillFitOrientedSolver(AssignmentStrategy):
+    """Strategy 2: maximizes total skill fit; preference breaks ties.
+
+    Objective (Section 2.5): sum sigma x + epsilon * sum w~ x.
+    """
+
+    def __init__(self) -> None:
+        """Initializes the skill-fit-oriented strategy."""
+        super().__init__(
+            name="SKILL_FIT",
+            description=(
+                "Maximizes total skill fit across project requirements; "
+                "normalized preference satisfaction breaks ties."
+            ),
+        )
+
+    def calculate_cost_or_utility(
+        self,
+        student: models.Student,
+        project: models.Project,
+        max_preferences: int,
+    ) -> float:
+        """Returns sigma_{s,p} + epsilon * w^pref_{s,p} / L."""
+        fit, _ = metrics.calculate_assignment_skill_fit(student, project)
+        normalized_pref = (
+            _borda_score(student, project, max_preferences) / max_preferences
+        )
+        return fit + self.epsilon * normalized_pref
+
+
 class AssignmentEngine(contract.AssignmentEngineContract):
     """Main Assignment Engine orchestrating validation, execution, and persistence.
 
@@ -264,7 +358,11 @@ class AssignmentEngine(contract.AssignmentEngineContract):
             run_repo if run_repo is not None else repositories.RunRepository()
         )
         self.strategies: dict[str, AssignmentStrategy] = {
-            # Team B: Instantiate and register your custom strategies here
+            strategy.name: strategy
+            for strategy in (
+                PreferenceOrientedSolver(),
+                SkillFitOrientedSolver(),
+            )
         }
 
     def validate_inputs(
@@ -305,18 +403,264 @@ class AssignmentEngine(contract.AssignmentEngineContract):
         5. Persist run and solutions via self.run_repo.
         6. Return populated models.AssignmentRun.
 
+        Alternatives come from re-solving the selected strategy with a no-good
+        cut against every earlier solution, so they are always distinct. Bad
+        input never raises: it is reported through the run status
+        (INVALID_INPUT, INFEASIBLE or FAILED) and the run diagnostics.
+
         Args:
             request: The run request containing students, projects, etc.
 
         Returns:
             The created AssignmentRun populated with alternative solutions.
+        """
+        run = models.AssignmentRun(
+            id=str(uuid.uuid4()),
+            configuration={
+                "max_alternatives": request.max_alternatives,
+                "primary_strategy": request.strategy_key,
+                "engine": "AssignmentEngine",
+            },
+        )
+
+        strategy = self.strategies.get(request.strategy_key)
+        if strategy is None:
+            return self._finish_run(
+                run,
+                contract.RunStatus.INVALID_INPUT,
+                {
+                    "message": f"Unknown strategy '{request.strategy_key}'.",
+                    "errors": [
+                        f"Strategy '{request.strategy_key}' is not available. "
+                        f"Choose one of: {', '.join(sorted(self.strategies))}."
+                    ],
+                },
+                notes=request.notes,
+            )
+
+        outcome = self.validate_inputs(request)
+        if not outcome.is_feasible:
+            return self._finish_run(
+                run,
+                contract.RunStatus.INFEASIBLE,
+                {
+                    "solver_status": "NOT_RUN",
+                    "message": (
+                        "Input validation proved the problem infeasible, so "
+                        "the solver was not run."
+                    ),
+                    "reasons": outcome.infeasibility_reasons,
+                    "errors": outcome.errors,
+                    "warnings": outcome.warnings,
+                },
+                notes=request.notes,
+            )
+        if not outcome.is_valid:
+            return self._finish_run(
+                run,
+                contract.RunStatus.INVALID_INPUT,
+                {
+                    "solver_status": "NOT_RUN",
+                    "message": "Input validation failed. Fix the errors below.",
+                    "errors": outcome.errors,
+                    "warnings": outcome.warnings,
+                },
+                notes=request.notes,
+            )
+
+        try:
+            self._sync_entities(request)
+        except sqlite3.Error as exc:
+            logger.exception("Could not synchronize cohort for run %s", run.id)
+            return self._finish_run(
+                run,
+                contract.RunStatus.FAILED,
+                {
+                    "message": "Could not store the cohort in the database.",
+                    "errors": [str(exc)],
+                    "warnings": outcome.warnings,
+                },
+                notes=request.notes,
+            )
+
+        max_alternatives = max(1, request.max_alternatives)
+        solutions: list[models.Solution] = []
+        excluded: list[list[tuple[str, str]]] = []
+        statuses: list[str] = []
+        last_diag: dict[str, Any] = {}
+        total_time = 0.0
+        for alt_number in range(1, max_alternatives + 1):
+            status, assignments, objective, last_diag = strategy.solve(
+                request.students,
+                request.projects,
+                request.fixed_assignments,
+                excluded,
+            )
+            statuses.append(status)
+            total_time += last_diag.get("solve_time_seconds", 0.0)
+            if status != "Optimal":
+                break
+            excluded.append([(a.student_id, a.project_id) for a in assignments])
+            indicators = metrics.compute_solution_indicators(
+                request.students,
+                request.projects,
+                assignments,
+                request.fixed_assignments,
+            )
+            solutions.append(
+                models.Solution(
+                    id=str(uuid.uuid4()),
+                    run_id=run.id,
+                    alternative_number=alt_number,
+                    strategy_name=strategy.name,
+                    objective_value=(
+                        round(objective, 4) if objective is not None else None
+                    ),
+                    assignments=assignments,
+                    indicators=indicators,
+                    warnings=self._solution_warnings(indicators, last_diag),
+                    diagnostics=last_diag,
+                )
+            )
+
+        diagnostics: dict[str, Any] = {
+            "solver_status": statuses[0],
+            "strategy": strategy.name,
+            "requested_alternatives": max_alternatives,
+            "distinct_alternatives": len(solutions),
+            "solution_count": len(solutions),
+            "solve_time_seconds": round(total_time, 3),
+            "warnings": outcome.warnings,
+        }
+        if solutions:
+            run_status = contract.RunStatus.COMPLETED
+            message = (
+                f"Found {len(solutions)} distinct solution(s) with strategy "
+                f"{strategy.name}."
+            )
+            if len(solutions) < max_alternatives:
+                if statuses[-1] == "Infeasible":
+                    message += (
+                        f" Only {len(solutions)} distinct feasible solution(s) "
+                        f"exist, although {max_alternatives} were requested."
+                    )
+                else:
+                    message += (
+                        " The search for further alternatives stopped with "
+                        f"solver status '{statuses[-1]}'."
+                    )
+            diagnostics["message"] = message
+        elif statuses[0] == "Infeasible":
+            run_status = contract.RunStatus.INFEASIBLE
+            diagnostics["message"] = (
+                "The solver proved that no assignment satisfies all hard "
+                "constraints."
+            )
+            diagnostics["reasons"] = [
+                "Check that the minimum capacities can be met, that fixed "
+                "assignments fit within project capacities and mandatory "
+                "skills, and that each mandatory skill is held by a student "
+                "who can join the project."
+            ]
+        elif statuses[0] == "Invalid":
+            run_status = contract.RunStatus.INVALID_INPUT
+            diagnostics["message"] = "The solver rejected the input."
+            diagnostics["errors"] = last_diag.get("reasons", [])
+        else:
+            run_status = contract.RunStatus.FAILED
+            diagnostics["message"] = (
+                f"The solver stopped with status '{statuses[0]}' before "
+                "finding a solution (time limit "
+                f"{config.Config.PULP_TIME_LIMIT_SECONDS} s)."
+            )
+        return self._finish_run(
+            run, run_status, diagnostics, solutions, notes=request.notes
+        )
+
+    def _sync_entities(self, request: contract.RunRequest) -> None:
+        """Stores the request's cohort so solution rows keep foreign keys valid.
+
+        Args:
+            request: The run request whose entities are synchronized.
 
         Raises:
-            NotImplementedError: To be implemented by Team B.
+            sqlite3.Error: If the database rejects a record.
         """
-        raise NotImplementedError(
-            "TODO (Team B): Implement execute_run in app/engine/solvers.py"
-        )
+        skill_repo = repositories.SkillRepository(self.run_repo.db)
+        for skill in request.skills or []:
+            skill_repo.save(skill)
+        project_repo = repositories.ProjectRepository(self.run_repo.db)
+        for project in request.projects:
+            project_repo.save(project)
+        student_repo = repositories.StudentRepository(self.run_repo.db)
+        for student in request.students:
+            student_repo.save(student)
+        fixed_repo = repositories.FixedAssignmentRepository(self.run_repo.db)
+        for fixed in request.fixed_assignments or []:
+            fixed_repo.save(fixed)
+
+    def _finish_run(
+        self,
+        run: models.AssignmentRun,
+        status: contract.RunStatus,
+        diagnostics: dict[str, Any],
+        solutions: list[models.Solution] | None = None,
+        notes: str = "",
+    ) -> models.AssignmentRun:
+        """Completes the run record, persists it, and returns it.
+
+        A database failure is logged and recorded in the diagnostics instead
+        of being raised, so the caller always receives the run.
+
+        Args:
+            run: The run being completed.
+            status: Final run status.
+            diagnostics: Run-level diagnostics shown to the user.
+            solutions: Generated solutions, if any.
+            notes: Administrative notes supplied with the request.
+
+        Returns:
+            The completed AssignmentRun.
+        """
+        run.status = status.value
+        run.solutions = solutions or []
+        run.diagnostics = diagnostics
+        if notes:
+            run.diagnostics["notes"] = notes
+        try:
+            self.run_repo.save_run(run)
+        except sqlite3.Error as exc:
+            logger.exception("Could not persist run %s", run.id)
+            run.diagnostics["persistence_error"] = str(exc)
+        return run
+
+    @staticmethod
+    def _solution_warnings(
+        indicators: dict[str, Any], diagnostics: dict[str, Any]
+    ) -> list[str]:
+        """Builds decision-maker warnings for one solution.
+
+        Args:
+            indicators: Indicators computed for the solution.
+            diagnostics: Solver diagnostics for the solution.
+
+        Returns:
+            Human-readable warnings, possibly empty.
+        """
+        warnings: list[str] = []
+        if not diagnostics.get("proven_optimal", True):
+            warnings.append(
+                "The solver hit its time limit: this solution is feasible but "
+                "may not be optimal."
+            )
+        unranked = indicators["fairness"]["unranked_count"]
+        if unranked:
+            warnings.append(
+                f"{unranked} student(s) are assigned to a project outside "
+                "their stated preferences."
+            )
+        warnings.extend(indicators["feasibility"]["violations"])
+        return warnings
 
     def run_assignment(
         self,
