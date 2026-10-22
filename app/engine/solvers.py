@@ -13,6 +13,9 @@ import logging
 from typing import Any
 import uuid
 
+import pulp
+
+from app import config
 from app.contract import contract
 from app.domain import models
 from app.domain import validation
@@ -27,15 +30,22 @@ class AssignmentStrategy(abc.ABC):
     objective functions (e.g. preference satisfaction, skill fit, balanced).
     """
 
-    def __init__(self, name: str, description: str) -> None:
+    def __init__(
+        self, name: str, description: str, min_difference: int = 1
+    ) -> None:
         """Initializes the strategy with descriptive metadata.
 
         Args:
             name: Machine-readable identifier for the strategy.
             description: Human-readable explanation of the objective function.
+            min_difference: Minimum number of students whose project must
+                differ from every excluded solution (d in Section 2.2).
         """
         self.name = name
         self.description = description
+        self.min_difference = min_difference
+        # Tie-breaking constant, set per solve to 1 / (|S| + 1) (Section 2.2).
+        self.epsilon = 0.0
 
     @abc.abstractmethod
     def calculate_cost_or_utility(
@@ -54,6 +64,30 @@ class AssignmentStrategy(abc.ABC):
         Returns:
             Numerical weight reflecting desirability in optimization objective.
         """
+
+    def add_strategy_terms(
+        self,
+        model: pulp.LpProblem,
+        x: dict[tuple[str, str], pulp.LpVariable],
+        students: list[models.Student],
+        projects: list[models.Project],
+    ) -> pulp.LpAffineExpression:
+        """Adds strategy-specific variables and constraints to the model.
+
+        The default strategy adds nothing. Subclasses override this when their
+        objective needs more than the per-pair coefficients, such as the
+        worst-rank variable rho in Strategy 1.
+
+        Args:
+            model: The PuLP model under construction.
+            x: Assignment variables keyed by (student_id, project_id).
+            students: List of students in the cohort.
+            projects: List of available semester projects.
+
+        Returns:
+            Extra terms to add to the objective function.
+        """
+        return pulp.LpAffineExpression()
 
     def solve(
         self,
@@ -79,13 +113,136 @@ class AssignmentStrategy(abc.ABC):
 
         Returns:
             A tuple of (solver_status, assignments, objective_value, diagnostics).
-
-        Raises:
-            NotImplementedError: To be implemented by Team B.
+            Assignments are empty unless solver_status is "Optimal".
         """
-        raise NotImplementedError(
-            f"TODO (Team B): Implement solver logic for strategy '{self.name}'"
+        fixed_pairs = {
+            (fa.student_id, fa.project_id) for fa in (fixed_assignments or [])
+        }
+        student_ids = {s.id for s in students}
+        project_ids = {p.id for p in projects}
+        unknown_locks = [
+            f"{s_id} -> {p_id}"
+            for s_id, p_id in sorted(fixed_pairs)
+            if s_id not in student_ids or p_id not in project_ids
+        ]
+        if unknown_locks:
+            return (
+                "Invalid",
+                [],
+                None,
+                {
+                    "solver_status": "Invalid",
+                    "reasons": [
+                        "Fixed assignment references unknown student or "
+                        f"project: {lock}"
+                        for lock in unknown_locks
+                    ],
+                },
+            )
+
+        # L: longest preference list in the cohort (Section 2.2).
+        max_preferences = max(
+            (pref.rank for s in students for pref in s.preferences), default=1
         )
+        self.epsilon = 1.0 / (len(students) + 1)
+
+        model = pulp.LpProblem(f"assignment_{self.name}", pulp.LpMaximize)
+        x = {
+            (s.id, p.id): pulp.LpVariable(f"x_{i}_{j}", cat=pulp.LpBinary)
+            for i, s in enumerate(students)
+            for j, p in enumerate(projects)
+        }
+        y = {
+            p.id: pulp.LpVariable(f"y_{j}", cat=pulp.LpBinary)
+            for j, p in enumerate(projects)
+        }
+
+        # Objective (Section 2.5): per-pair coefficients plus strategy terms.
+        model.setObjective(
+            pulp.lpSum(
+                self.calculate_cost_or_utility(s, p, max_preferences)
+                * x[s.id, p.id]
+                for s in students
+                for p in projects
+            )
+            + self.add_strategy_terms(model, x, students, projects)
+        )
+
+        # Constraint 1: every student receives exactly one project.
+        for s in students:
+            model += pulp.lpSum(x[s.id, p.id] for p in projects) == 1
+
+        # Constraint 2: capacity bounds apply only to active projects.
+        for p in projects:
+            headcount = pulp.lpSum(x[s.id, p.id] for s in students)
+            model += headcount >= p.min_capacity * y[p.id]
+            model += headcount <= p.max_capacity * y[p.id]
+            for s in students:
+                model += x[s.id, p.id] <= y[p.id]
+
+        # Constraint 3: administrative locks.
+        for pair in fixed_pairs:
+            model += x[pair] == 1
+
+        # Constraint 4: an active project needs at least one qualified
+        # student for each mandatory skill.
+        for p in projects:
+            for req in p.requirements:
+                if req.is_mandatory:
+                    qualified = [
+                        s
+                        for s in students
+                        if s.get_skill_level(req.skill_id) >= req.minimum_level
+                    ]
+                    model += (
+                        pulp.lpSum(x[s.id, p.id] for s in qualified)
+                        >= y[p.id]
+                    )
+
+        # Constraint 5: no-good cuts against previously found allocations.
+        for previous in excluded_solutions or []:
+            model += (
+                pulp.lpSum(x[pair] for pair in previous if pair in x)
+                <= len(students) - self.min_difference
+            )
+
+        solver = pulp.PULP_CBC_CMD(
+            msg=False, timeLimit=config.Config.PULP_TIME_LIMIT_SECONDS
+        )
+        model.solve(solver)
+        status = pulp.LpStatus[model.status]
+        diagnostics: dict[str, Any] = {
+            "solver_status": status,
+            "proven_optimal": model.sol_status == pulp.LpSolutionOptimal,
+            "solve_time_seconds": round(model.solutionTime, 3),
+            "num_variables": len(model.variables()),
+            "num_constraints": len(model.constraints),
+            "max_preferences": max_preferences,
+            "epsilon": self.epsilon,
+        }
+        if model.status != pulp.LpStatusOptimal:
+            return status, [], None, diagnostics
+
+        assignments: list[models.Assignment] = []
+        for s in students:
+            for p in projects:
+                if (x[s.id, p.id].value() or 0) > 0.5:
+                    fit, unmet = metrics.calculate_assignment_skill_fit(s, p)
+                    assignments.append(
+                        models.Assignment(
+                            student_id=s.id,
+                            project_id=p.id,
+                            is_fixed=(s.id, p.id) in fixed_pairs,
+                            preference_rank=s.get_preference_rank(p.id),
+                            skill_fit_score=fit,
+                            unmet_requirements=unmet,
+                        )
+                    )
+                    break
+        diagnostics["active_projects"] = [
+            p.id for p in projects if (y[p.id].value() or 0) > 0.5
+        ]
+        return status, assignments, pulp.value(model.objective), diagnostics
 
 
 class AssignmentEngine(contract.AssignmentEngineContract):
