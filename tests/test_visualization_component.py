@@ -125,6 +125,7 @@ def test_scenario_loading_and_optimization_trigger(
     assert b"Transparent Decision Recommendations" in recs_res.data
     assert b"Calculated Evidence" in recs_res.data
     assert b"Policy Advice" in recs_res.data
+    assert b"Pareto Opportunity Costs" in recs_res.data
 
 
 def test_create_student_preference_validation(

@@ -15,7 +15,7 @@ def test_assignment_strategy_abc() -> None:
 
 
 def test_assignment_engine_initialization() -> None:
-    """Verifies that AssignmentEngine initializes with default strategies."""
+    """Verifies that AssignmentEngine initializes cleanly with default strategies."""
     engine = solvers.AssignmentEngine()
     assert isinstance(engine, contract.AssignmentEngineContract)
     assert isinstance(engine.strategies, dict)
@@ -25,13 +25,15 @@ def test_assignment_engine_initialization() -> None:
 
 
 def test_assignment_engine_execute_run() -> None:
-    """Verifies that execute_run successfully executes an optimization run."""
+    """Verifies that execute_run successfully computes assignments."""
     engine = solvers.AssignmentEngine()
     benchmark = demo_data.get_standard_scenario()
     request = contract.RunRequest(
         students=benchmark["students"],
         projects=benchmark["projects"],
         skills=benchmark["skills"],
+        fixed_assignments=benchmark["fixed_assignments"],
+        strategy_key="PREFERENCE",
         max_alternatives=2,
     )
     run = engine.execute_run(request)
