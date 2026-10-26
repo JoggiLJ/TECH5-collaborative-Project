@@ -397,6 +397,7 @@ def compare_two_solutions(
         "delta_metrics": delta_metrics,
         "delta_mean_skill_fit": delta_metrics["mean_skill_fit_delta"],
         "delta_mean_rank": delta_metrics["mean_rank_delta"],
+        "delta_gini": delta_metrics["gini_delta"],
         "delta_unranked_count": delta_metrics["unranked_count_delta"],
         "trade_off_summary": summary,
     }

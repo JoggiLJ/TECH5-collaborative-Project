@@ -919,23 +919,46 @@ def lock_and_rerun(solution_id: str) -> flask.Response:
     skills = repositories.SkillRepository().list_all()
     fixed = fixed_repo.list_all()
 
+    run_repo = repositories.RunRepository()
+    source_solution = run_repo.get_solution(solution_id)
+    strategy_key = "PREFERENCE"
+    if source_solution and source_solution.strategy_name:
+        strategy_key = source_solution.strategy_name
+
     engine: contract.AssignmentEngineContract = solvers.AssignmentEngine()
     req = contract.RunRequest(
         students=students,
         projects=projects,
         skills=skills,
         fixed_assignments=fixed,
+        strategy_key=strategy_key,
+        max_alternatives=2,
     )
     try:
         new_run = engine.execute_run(req)
     except NotImplementedError:
         new_run = mocks.MockAssignmentEngine().execute_run(req)
 
-    flask.flash(
-        f"Student {student_id} locked to Project {project_id}. "
-        "New run generated!",
-        "success",
-    )
+    if new_run.status == contract.RunStatus.INFEASIBLE:
+        reason = new_run.diagnostics.get(
+            "message",
+            "Hard constraints (capacities or mandatory skills) could not be met.",
+        )
+        flask.flash(
+            f"Constraint saved: Student {student_id} locked to Project "
+            f"{project_id}. However, this lock rendered the assignment "
+            f"INFEASIBLE: {reason}",
+            "danger",
+        )
+    else:
+        sol_count = len(new_run.solutions)
+        flask.flash(
+            f"Student {student_id} successfully locked to Project "
+            f"{project_id}. Re-run complete with {sol_count} solution(s) "
+            f"respecting the hard constraint!",
+            "success",
+        )
+
     return flask.redirect(
         flask.url_for("visualization_web.view_run", run_id=new_run.id)
     )
@@ -1010,6 +1033,24 @@ def compare_solutions() -> Any:
                 "One or both solutions could not be retrieved for comparison.",
                 "danger",
             )
+
+    # Enrich changed assignments with human-readable student names and project titles
+    if comparison is not None:
+        student_repo = repositories.StudentRepository()
+        project_repo = repositories.ProjectRepository()
+        student_names = {s.id: s.display_name for s in student_repo.list_all()}
+        project_titles = {p.id: p.title for p in project_repo.list_all()}
+
+        for asg in comparison.changed_assignments:
+            s_id = asg.get("student_id")
+            if s_id and (asg.get("student_name") == s_id or not asg.get("student_name")):
+                asg["student_name"] = student_names.get(s_id, s_id)
+            p_a = asg.get("project_a") or asg.get("project_a_id")
+            if p_a and (asg.get("project_a_title") == p_a or not asg.get("project_a_title")):
+                asg["project_a_title"] = project_titles.get(p_a, p_a)
+            p_b = asg.get("project_b") or asg.get("project_b_id")
+            if p_b and (asg.get("project_b_title") == p_b or not asg.get("project_b_title")):
+                asg["project_b_title"] = project_titles.get(p_b, p_b)
 
     return flask.render_template(
         "compare.html",
