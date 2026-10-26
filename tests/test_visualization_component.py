@@ -124,6 +124,7 @@ def test_scenario_loading_and_optimization_trigger(
     assert b"Transparent Decision Recommendations" in recs_res.data
     assert b"Calculated Evidence" in recs_res.data
     assert b"Policy Advice" in recs_res.data
+    assert b"Pareto Opportunity Costs" in recs_res.data
 
 
 def test_create_student_preference_validation(
@@ -175,10 +176,6 @@ def test_create_student_preference_validation(
     assert saved.preferences[0].project_id == "P1"
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team A): Implement skill CRUD",
-)
 def test_skills_crud_workflow(tmp_path: pathlib.Path) -> None:
     """Verifies skill addition workflow (Team A implementation)."""
     db_file = tmp_path / "test_skill.db"
