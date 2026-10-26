@@ -820,14 +820,12 @@ def trigger_run() -> flask.Response:
         flask.flash(f"Warning: {warning_msg}", "warning")
     try:
         run = engine.execute_run(req)
-    except NotImplementedError:
+    except NotImplementedError as exc:
         flask.flash(
-            "Notice: AssignmentEngine.execute_run() is not yet implemented by "
-            "Team B. Running with MockAssignmentEngine for demonstration.",
-            "info",
+            f"Production solver error: {exc}. Please verify Team B solver integration.",
+            "danger",
         )
-        mock_engine = mocks.MockAssignmentEngine()
-        run = mock_engine.execute_run(req)
+        return flask.redirect(flask.url_for("visualization_web.dashboard"))
 
     if run.status == "COMPLETED":
         flask.flash(
@@ -936,10 +934,26 @@ def lock_and_rerun(solution_id: str) -> flask.Response:
     )
     try:
         new_run = engine.execute_run(req)
-    except NotImplementedError:
-        new_run = mocks.MockAssignmentEngine().execute_run(req)
+    except NotImplementedError as exc:
+        flask.flash(
+            f"Production solver error during re-run: {exc}",
+            "danger",
+        )
+        return flask.redirect(
+            flask.url_for(
+                "visualization_web.view_solution", solution_id=solution_id
+            )
+        )
 
-    if new_run.status == contract.RunStatus.INFEASIBLE:
+    if new_run.status == "COMPLETED" and len(new_run.solutions) > 0:
+        sol_count = len(new_run.solutions)
+        flask.flash(
+            f"Student {student_id} successfully locked to Project "
+            f"{project_id}. Re-run complete with {sol_count} solution(s) "
+            f"respecting the hard constraint!",
+            "success",
+        )
+    elif new_run.status == "INFEASIBLE":
         reason = new_run.diagnostics.get(
             "message",
             "Hard constraints (capacities or mandatory skills) could not be met.",
@@ -951,12 +965,14 @@ def lock_and_rerun(solution_id: str) -> flask.Response:
             "danger",
         )
     else:
-        sol_count = len(new_run.solutions)
+        err_msg = (
+            new_run.diagnostics.get("message")
+            or f"Run ended with status: {new_run.status}."
+        )
         flask.flash(
-            f"Student {student_id} successfully locked to Project "
-            f"{project_id}. Re-run complete with {sol_count} solution(s) "
-            f"respecting the hard constraint!",
-            "success",
+            f"Constraint saved: Student {student_id} locked to Project "
+            f"{project_id}, but re-run was unsuccessful ({new_run.status}): {err_msg}",
+            "warning",
         )
 
     return flask.redirect(
@@ -1019,15 +1035,12 @@ def compare_solutions() -> Any:
         engine: contract.AssignmentEngineContract = solvers.AssignmentEngine()
         try:
             comparison = engine.compare_solutions(sol_a.id, sol_b.id)
-        except NotImplementedError:
+        except NotImplementedError as exc:
             flask.flash(
-                "Notice: AssignmentEngine.compare_solutions() is not yet "
-                "implemented by Team B. Running with MockAssignmentEngine "
-                "for demonstration.",
-                "info",
+                f"Production solution comparison error: {exc}. Please verify Team B metrics.",
+                "danger",
             )
-            mock_engine = mocks.MockAssignmentEngine()
-            comparison = mock_engine.compare_solutions(sol_a.id, sol_b.id)
+            comparison = None
         except KeyError:
             flask.flash(
                 "One or both solutions could not be retrieved for comparison.",
