@@ -65,8 +65,7 @@
         <span class="kpi-label">&Delta; Average Skill Fit</span>
         <span
           class="kpi-value {% if comparison.delta_mean_skill_fit > 0 %}text-success{% elif comparison.delta_mean_skill_fit < 0 %}text-danger{% endif %}">
-          {% if comparison.delta_mean_skill_fit > 0 %}+{% endif %}{{ (comparison.delta_mean_skill_fit * 100)|round(1)
-          }}%
+          {% if comparison.delta_mean_skill_fit > 0 %}+{% endif %}{{ (comparison.delta_mean_skill_fit * 100)|round(1) }}%
         </span>
         <span class="kpi-sub">Solution B vs Solution A</span>
       </div>
@@ -78,6 +77,24 @@
           {% if comparison.delta_mean_rank > 0 %}+{% endif %}{{ comparison.delta_mean_rank }}
         </span>
         <span class="kpi-sub">Lower rank number is better</span>
+      </div>
+
+      <div class="kpi-card">
+        <span class="kpi-label">&Delta; Gini (Fairness / Inequality)</span>
+        {% set gini_val = comparison.delta_gini if comparison.delta_gini is defined and comparison.delta_gini != 0.0 else comparison.delta_metrics.get('gini_delta', 0.0) %}
+        <span
+          class="kpi-value {% if gini_val < 0 %}text-success{% elif gini_val > 0 %}text-danger{% endif %}">
+          {% if gini_val > 0 %}+{% endif %}{{ gini_val|round(4) }}
+        </span>
+        <span class="kpi-sub">
+          {% if gini_val < 0 %}
+          &#9660; Mer rettferdig (lavere ulikhet)
+          {% elif gini_val > 0 %}
+          &#9650; Høyere ulikhet
+          {% else %}
+          Uendret ulikhet
+          {% endif %}
+        </span>
       </div>
 
       <div class="kpi-card">
@@ -111,30 +128,64 @@
         <thead>
           <tr>
             <th>Student</th>
-            <th>Solution A Project</th>
-            <th>Solution A Rank</th>
-            <th>Solution B Project</th>
-            <th>Solution B Rank</th>
+            <th>Solution A Allocation</th>
+            <th>Solution B Allocation</th>
             <th>Rank Shift (&Delta; Rank)</th>
+            {% if can_edit %}
+            <th>Override &amp; Lock</th>
+            {% endif %}
           </tr>
         </thead>
         <tbody>
           {% for c in comparison.changed_assignments %}
           <tr>
-            <td><strong>{{ c.student_name or c.student_id }}</strong></td>
-            <td>{{ c.project_a_title or c.project_a_id }}</td>
-            <td>Choice #{{ c.rank_a }}</td>
-            <td>{{ c.project_b_title or c.project_b_id }}</td>
-            <td>Choice #{{ c.rank_b }}</td>
             <td>
-              {% if c.rank_delta < 0 %} <span class="badge badge-success">&#9650; {{ c.rank_delta|abs }} ranks
-                better</span>
-                {% elif c.rank_delta > 0 %}
-                <span class="badge badge-danger">&#9660; {{ c.rank_delta }} ranks worse</span>
-                {% else %}
-                <span class="badge badge-secondary">Lateral move</span>
-                {% endif %}
+              <strong>{{ c.student_name or c.student_id }}</strong>
+              {% if c.student_name and c.student_name != c.student_id %}
+              <br><small style="color: var(--text-muted);">{{ c.student_id }}</small>
+              {% endif %}
             </td>
+            <td>
+              <strong>{{ c.project_a_title or c.project_a_id }}</strong><br>
+              <small style="color: var(--text-muted);">
+                Choice #{{ c.rank_a }} &middot; Fit: {{ ((c.skill_fit_a or 0) * 100)|round(0) }}%
+              </small>
+            </td>
+            <td>
+              <strong>{{ c.project_b_title or c.project_b_id }}</strong><br>
+              <small style="color: var(--text-muted);">
+                Choice #{{ c.rank_b }} &middot; Fit: {{ ((c.skill_fit_b or 0) * 100)|round(0) }}%
+              </small>
+            </td>
+            <td>
+              {% if c.rank_delta < 0 %}
+              <span class="badge badge-success">&#9650; {{ c.rank_delta|abs }} ranks better</span>
+              {% elif c.rank_delta > 0 %}
+              <span class="badge badge-danger">&#9660; {{ c.rank_delta }} ranks worse</span>
+              {% else %}
+              <span class="badge badge-secondary">Lateral move</span>
+              {% endif %}
+            </td>
+            {% if can_edit %}
+            <td>
+              <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
+                <form action="{{ url_for('visualization_web.lock_and_rerun', solution_id=sol_a.id) }}" method="POST" onsubmit="return confirm('Lock student {{ c.student_name or c.student_id }} to project {{ c.project_a_title or c.project_a_id }} (Solution A) and re-run optimization?');">
+                  <input type="hidden" name="student_id" value="{{ c.student_id }}">
+                  <input type="hidden" name="project_id" value="{{ c.project_a_id or c.project_a }}">
+                  <button type="submit" class="btn btn-sm btn-outline-primary" style="padding: 0.2rem 0.5rem; font-size: 0.78rem;" title="Lock student to Solution A project and re-run solver">
+                    &#128274; Lock to A &amp; Rerun
+                  </button>
+                </form>
+                <form action="{{ url_for('visualization_web.lock_and_rerun', solution_id=sol_b.id) }}" method="POST" onsubmit="return confirm('Lock student {{ c.student_name or c.student_id }} to project {{ c.project_b_title or c.project_b_id }} (Solution B) and re-run optimization?');">
+                  <input type="hidden" name="student_id" value="{{ c.student_id }}">
+                  <input type="hidden" name="project_id" value="{{ c.project_b_id or c.project_b }}">
+                  <button type="submit" class="btn btn-sm btn-outline-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.78rem;" title="Lock student to Solution B project and re-run solver">
+                    &#128274; Lock to B &amp; Rerun
+                  </button>
+                </form>
+              </div>
+            </td>
+            {% endif %}
           </tr>
           {% endfor %}
         </tbody>

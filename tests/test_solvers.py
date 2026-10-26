@@ -15,10 +15,11 @@ def test_assignment_strategy_abc() -> None:
 
 
 def test_assignment_engine_initialization() -> None:
-    """Verifies that AssignmentEngine initializes cleanly with solver strategies."""
+    """Verifies that AssignmentEngine initializes cleanly with default strategies."""
     engine = solvers.AssignmentEngine()
     assert isinstance(engine, contract.AssignmentEngineContract)
     assert isinstance(engine.strategies, dict)
+    assert len(engine.strategies) == 2
     assert "PREFERENCE" in engine.strategies
     assert "SKILL_FIT" in engine.strategies
 
@@ -33,6 +34,7 @@ def test_assignment_engine_execute_run() -> None:
         skills=benchmark["skills"],
         fixed_assignments=benchmark["fixed_assignments"],
         strategy_key="PREFERENCE",
+        max_alternatives=2,
     )
     run = engine.execute_run(request)
     assert run.status == "COMPLETED"

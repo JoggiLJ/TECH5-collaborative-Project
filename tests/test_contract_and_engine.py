@@ -81,7 +81,7 @@ def test_contract_execute_and_retrieval(tmp_path: pathlib.Path) -> None:
         max_alternatives=2,
     )
 
-    # 1. Real AssignmentEngine fulfills contract execution and persistence (Team B)
+    # 1. AssignmentEngine fulfills contract execution and persistence (Team B)
     engine: contract.AssignmentEngineContract = solvers.AssignmentEngine()
     real_run = engine.execute_run(request)
     assert real_run.status == "COMPLETED"
@@ -149,7 +149,7 @@ def test_contract_compare_solutions(tmp_path: pathlib.Path) -> None:
     with pytest.raises(KeyError):
         mock_engine.compare_solutions(sol_a.id, "non_existent_id")
 
-    # Real AssignmentEngine delegates to metrics to compare solutions
+    # AssignmentEngine delegates to metrics to compare solutions
     engine: contract.AssignmentEngineContract = solvers.AssignmentEngine()
     real_comparison = engine.compare_solutions(sol_a.id, sol_b.id)
     assert isinstance(real_comparison, models.RunComparison)
