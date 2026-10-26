@@ -663,6 +663,7 @@ class RunComparison:
     rank_worsened_count: int = 0
     delta_mean_skill_fit: float = 0.0
     delta_mean_rank: float = 0.0
+    delta_gini: float = 0.0
     delta_unranked_count: int = 0
     trade_off_summary: list[str] = dataclasses.field(default_factory=list)
 
@@ -686,6 +687,7 @@ class RunComparison:
             "rank_worsened_count": self.rank_worsened_count,
             "delta_mean_skill_fit": self.delta_mean_skill_fit,
             "delta_mean_rank": self.delta_mean_rank,
+            "delta_gini": self.delta_gini,
             "delta_unranked_count": self.delta_unranked_count,
             "trade_off_summary": list(self.trade_off_summary),
         }
@@ -700,20 +702,42 @@ class RunComparison:
         Returns:
             A new RunComparison instance.
         """
+        delta_metrics = dict(data.get("delta_metrics", {}))
         return cls(
             solution_a_id=str(data.get("solution_a_id", "")),
             solution_a_alt=int(data.get("solution_a_alt", 1)),
             solution_b_id=str(data.get("solution_b_id", "")),
             solution_b_alt=int(data.get("solution_b_alt", 2)),
-            delta_metrics=dict(data.get("delta_metrics", {})),
+            delta_metrics=delta_metrics,
             changed_assignments=list(data.get("changed_assignments", [])),
             changed_students_count=int(data.get("changed_students_count", 0)),
             total_students=int(data.get("total_students", 0)),
             is_distinct=bool(data.get("is_distinct", True)),
             rank_improved_count=int(data.get("rank_improved_count", 0)),
             rank_worsened_count=int(data.get("rank_worsened_count", 0)),
-            delta_mean_skill_fit=float(data.get("delta_mean_skill_fit", 0.0)),
-            delta_mean_rank=float(data.get("delta_mean_rank", 0.0)),
-            delta_unranked_count=int(data.get("delta_unranked_count", 0)),
+            delta_mean_skill_fit=float(
+                data.get(
+                    "delta_mean_skill_fit",
+                    delta_metrics.get("mean_skill_fit_delta", 0.0),
+                )
+            ),
+            delta_mean_rank=float(
+                data.get(
+                    "delta_mean_rank",
+                    delta_metrics.get("mean_rank_delta", 0.0),
+                )
+            ),
+            delta_gini=float(
+                data.get(
+                    "delta_gini",
+                    delta_metrics.get("gini_delta", 0.0),
+                )
+            ),
+            delta_unranked_count=int(
+                data.get(
+                    "delta_unranked_count",
+                    delta_metrics.get("unranked_count_delta", 0),
+                )
+            ),
             trade_off_summary=list(data.get("trade_off_summary", [])),
         )

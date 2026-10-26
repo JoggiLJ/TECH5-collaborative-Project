@@ -126,11 +126,11 @@
               {% if can_edit %}
                 <td>
                   {% if not asg.is_fixed %}
-                    <form action="{{ url_for('visualization_web.lock_and_rerun', solution_id=solution.id) }}" method="POST" onsubmit="return confirm('Lock student {{ asg.student_id }} to project {{ asg.project_id }} and run optimization again?');">
+                    <form action="{{ url_for('visualization_web.lock_and_rerun', solution_id=solution.id) }}" method="POST" onsubmit="return confirm('Lock student {{ stud.display_name if stud else asg.student_id }} to project {{ proj.title if proj else asg.project_id }} and run optimization again?');">
                       <input type="hidden" name="student_id" value="{{ asg.student_id }}">
                       <input type="hidden" name="project_id" value="{{ asg.project_id }}">
-                      <button type="submit" class="btn btn-sm btn-secondary" title="Lock this pair and trigger rerun">
-                        &#128274; Lock & Rerun
+                      <button type="submit" class="btn btn-sm btn-outline-primary" title="Lock this pair and trigger rerun">
+                        &#128274; Lock &amp; Rerun
                       </button>
                     </form>
                   {% else %}

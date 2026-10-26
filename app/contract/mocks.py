@@ -443,6 +443,7 @@ class MockAssignmentEngine(contract.AssignmentEngineContract):
                 "mean_skill_fit_delta", 0.0
             ),
             delta_mean_rank=delta_metrics.get("mean_rank_delta", 0.0),
+            delta_gini=delta_metrics.get("gini_delta", 0.0),
             trade_off_summary=[
                 f"{len(changed)} student(s) reallocated across alternatives."
             ],
